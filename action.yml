@@ -1,5 +1,5 @@
 name: 'setup-k8s-action'
-description: 'Setup k8s tools, config and populate KUBECONFIG env variable'
+description: 'Setup k8s tools and write kubeconfig to ~/.kube/config'
 inputs:
   environment:
     required: true
@@ -11,18 +11,21 @@ inputs:
   config-staging:
     required: true
     description: k8s configuration for staging
-  location:
-    default: .kube/config
-    description: The location of the config
+outputs:
+  kube-context:
+    description: the name of the kubernetes context
+    value: k8s-${{ inputs.environment }}
 runs:
   using: "composite"
   steps:
   - shell: bash
     run: |
-      echo "Unknown environment: ${{ inputs.environment }}"
+      echo "Unknown environment: ${ENVIRONMENT}"
       exit 1
     if: (inputs.environment != 'production' && inputs.environment != 'staging')
-  - uses: yokawasa/action-setup-kube-tools@v0.11.2
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+  - uses: yokawasa/action-setup-kube-tools@9d39563c24d4a419d1a8289c34d6da5a6171252c # v0.13.5
     with:
       kubectl: '1.31.2'
       # supports env vars > to secrets/configs
@@ -32,15 +35,27 @@ runs:
         kustomize
         kubeconform
         helm
-  - run: mkdir -p .kube
+  - run: mkdir -p ~/.kube
     shell: bash
-  - run: 'echo "${{ inputs.config-production }}" > ${{ inputs.location }}'
+  - name: setup production
+    run: |
+      echo "${CONFIG}" > ~/.kube/config
+      OLD_CONTEXT=$(kubectl config current-context)
+      kubectl config rename-context "${OLD_CONTEXT}" "k8s-${ENVIRONMENT}"
+      kubectl config use-context "k8s-${ENVIRONMENT}"
     if: inputs.environment == 'production'
     shell: bash
-  - run: 'echo "${{ inputs.config-staging }}" > ${{ inputs.location }}'
+    env:
+      CONFIG: ${{ inputs.config-production }}
+      ENVIRONMENT: ${{ inputs.environment }}
+  - name: setup staging
+    run: |
+      echo "${CONFIG}" > ~/.kube/config
+      OLD_CONTEXT=$(kubectl config current-context)
+      kubectl config rename-context "${OLD_CONTEXT}" "k8s-${ENVIRONMENT}"
+      kubectl config use-context "k8s-${ENVIRONMENT}"
     if: inputs.environment == 'staging'
     shell: bash
-  - run: echo 'KUBECONFIG=${{ inputs.location }}' >> $GITHUB_ENV
-    shell: bash
-  - run: cat $KUBECONFIG
-    shell: bash
+    env:
+      CONFIG: ${{ inputs.config-staging }}
+      ENVIRONMENT: ${{ inputs.environment }}
